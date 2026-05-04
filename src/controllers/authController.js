@@ -4,7 +4,7 @@ import { generateToken } from '../utils/jwt.js';
 
 export const signup = async (req, res) => {
   try {
-    const { firstName, lastName, email, password } = req.body;
+    const { firstName, lastName, email, password, role } = req.body;
 
     // Check if user exists
     const existingUser = await User.findOne({ email });
@@ -21,7 +21,7 @@ export const signup = async (req, res) => {
       lastName,
       email,
       password: hashedPassword,
-      role: 'member',
+      role: role || 'member',
     });
 
     // Generate token
