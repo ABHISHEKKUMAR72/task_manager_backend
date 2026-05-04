@@ -31,7 +31,15 @@ export const createProject = async (req, res) => {
 
 export const getProjects = async (req, res) => {
   try {
-    const projects = await Project.find({ ownerId: req.user.id });
+    const memberships = await ProjectMember.find({ userId: req.user.id });
+    const projectIds = memberships.map(m => m.projectId);
+
+    const projects = await Project.find({
+      $or: [
+        { ownerId: req.user.id },
+        { _id: { $in: projectIds } }
+      ]
+    });
 
     res.json({
       message: 'Projects retrieved',
