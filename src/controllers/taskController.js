@@ -155,18 +155,26 @@ export const deleteTask = async (req, res) => {
 export const getTaskStats = async (req, res) => {
   try {
     const userId = req.user.id;
+    let tasks = [];
 
-    // Get all tasks assigned to user
-    const assignedTasks = await Task.find({
-      assignedTo: userId,
-    });
+    if (req.user.role === 'admin') {
+      // Find projects owned by admin
+      const projects = await Project.find({ ownerId: userId });
+      const projectIds = projects.map(p => p._id);
+      
+      // Get all tasks for these projects
+      tasks = await Task.find({ projectId: { $in: projectIds } });
+    } else {
+      // Get all tasks assigned to user
+      tasks = await Task.find({ assignedTo: userId });
+    }
 
     const stats = {
-      total: assignedTasks.length,
-      todo: assignedTasks.filter(t => t.status === 'todo').length,
-      inProgress: assignedTasks.filter(t => t.status === 'in_progress').length,
-      completed: assignedTasks.filter(t => t.status === 'completed').length,
-      overdue: assignedTasks.filter(
+      total: tasks.length,
+      todo: tasks.filter(t => t.status === 'todo').length,
+      inProgress: tasks.filter(t => t.status === 'in_progress').length,
+      completed: tasks.filter(t => t.status === 'completed').length,
+      overdue: tasks.filter(
         t => t.dueDate && new Date(t.dueDate) < new Date() && t.status !== 'completed'
       ).length,
     };
@@ -174,7 +182,7 @@ export const getTaskStats = async (req, res) => {
     res.json({
       message: 'Task statistics retrieved',
       stats,
-      tasks: assignedTasks,
+      tasks: tasks,
     });
   } catch (error) {
     console.error(error);
