@@ -53,19 +53,33 @@ export const getProjectTasks = async (req, res) => {
       return res.status(404).json({ message: 'Project not found' });
     }
 
-    const hasAccess = project.ownerId.toString() === req.user.id ||
-      await ProjectMember.findOne({
-        projectId, userId: req.user.id
-      }) ||
-      req.user.role === 'admin';
+    // Check if user is project owner
+    const isOwner = project.ownerId.toString() === req.user.id;
+    
+    // Check if user is project member and get their role
+    const membership = await ProjectMember.findOne({
+      projectId, userId: req.user.id
+    });
+    
+    const isProjectAdmin = membership?.role === 'admin';
+    const hasAccess = isOwner || membership || req.user.role === 'admin';
 
     if (!hasAccess) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
-    const tasks = await Task.find({
-      projectId,
-    });
+    // Filter tasks based on role
+    let tasks;
+    if (isOwner || isProjectAdmin || req.user.role === 'admin') {
+      // Project admin/owner can see all tasks
+      tasks = await Task.find({ projectId });
+    } else {
+      // Regular members see only tasks assigned to them
+      tasks = await Task.find({ 
+        projectId,
+        assignedTo: req.user.id 
+      });
+    }
 
     res.json({
       message: 'Tasks retrieved',
@@ -157,17 +171,9 @@ export const getTaskStats = async (req, res) => {
     const userId = req.user.id;
     let tasks = [];
 
-    if (req.user.role === 'admin') {
-      // Find projects owned by admin
-      const projects = await Project.find({ ownerId: userId });
-      const projectIds = projects.map(p => p._id);
-      
-      // Get all tasks for these projects
-      tasks = await Task.find({ projectId: { $in: projectIds } });
-    } else {
-      // Get all tasks assigned to user
-      tasks = await Task.find({ assignedTo: userId });
-    }
+    // For all users (including admins), show only tasks assigned to them
+    // This ensures consistency and clarity in the dashboard
+    tasks = await Task.find({ assignedTo: userId });
 
     const stats = {
       total: tasks.length,
