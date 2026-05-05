@@ -31,7 +31,15 @@ export const createProject = async (req, res) => {
 
 export const getProjects = async (req, res) => {
   try {
-    const projects = await Project.find({ ownerId: req.user.id });
+    const memberships = await ProjectMember.find({ userId: req.user.id });
+    const projectIds = memberships.map(m => m.projectId);
+
+    const projects = await Project.find({
+      $or: [
+        { ownerId: req.user.id },
+        { _id: { $in: projectIds } }
+      ]
+    });
 
     res.json({
       message: 'Projects retrieved',
@@ -149,7 +157,7 @@ export const deleteProject = async (req, res) => {
 export const addMember = async (req, res) => {
   try {
     const { projectId } = req.params;
-    const { userId, role } = req.body;
+    const { userId, email, role } = req.body;
 
     const project = await Project.findById(projectId);
 
@@ -162,15 +170,23 @@ export const addMember = async (req, res) => {
       return res.status(403).json({ message: 'Access denied' });
     }
 
-    // Check if user exists
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+    // Check if user exists by email or userId
+    let user;
+    if (email) {
+      user = await User.findOne({ email });
+    } else if (userId) {
+      user = await User.findById(userId);
     }
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found with that email' });
+    }
+
+    const targetUserId = user._id;
 
     // Check if already a member
     const existingMember = await ProjectMember.findOne({
-      projectId, userId
+      projectId, userId: targetUserId
     });
 
     if (existingMember) {
@@ -179,7 +195,7 @@ export const addMember = async (req, res) => {
 
     const member = await ProjectMember.create({
       projectId,
-      userId,
+      userId: targetUserId,
       role: role || 'member',
     });
 
