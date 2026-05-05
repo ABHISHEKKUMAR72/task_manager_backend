@@ -15,6 +15,8 @@ const app = express();
 const allowedOrigins = [
   'http://localhost:3000',
   'https://team-task-manager-frontend-plum.vercel.app',
+  'https://task-manager-nine-psi-22.vercel.app',
+  'http://localhost:5173/',
   process.env.FRONTEND_URL
 ].filter(Boolean);
 
