@@ -1,4 +1,5 @@
 import { Project, ProjectMember, Task, User } from '../models/index.js';
+import { notificationService } from '../services/notificationService.js';
 
 export const createProject = async (req, res) => {
   try {
@@ -159,18 +160,23 @@ export const addMember = async (req, res) => {
     const { projectId } = req.params;
     const { userId, email, role } = req.body;
 
+    // Validation
+    if (!userId && !email) {
+      return res.status(400).json({ message: 'Either userId or email is required' });
+    }
+
     const project = await Project.findById(projectId);
 
     if (!project) {
       return res.status(404).json({ message: 'Project not found' });
     }
 
-    // Check authorization
+    // Check authorization - only project owner or admin can add members
     if (project.ownerId.toString() !== req.user.id && req.user.role !== 'admin') {
-      return res.status(403).json({ message: 'Access denied' });
+      return res.status(403).json({ message: 'Only project owners can add members' });
     }
 
-    // Check if user exists by email or userId
+    // Find user by email or userId
     let user;
     if (email) {
       user = await User.findOne({ email });
@@ -179,25 +185,38 @@ export const addMember = async (req, res) => {
     }
 
     if (!user) {
-      return res.status(404).json({ message: 'User not found with that email' });
+      return res.status(404).json({ message: 'User not found' });
     }
 
-    const targetUserId = user._id;
+    // Cannot add owner as member again
+    if (project.ownerId.toString() === user._id.toString()) {
+      return res.status(400).json({ message: 'Project owner is already a member' });
+    }
 
     // Check if already a member
     const existingMember = await ProjectMember.findOne({
-      projectId, userId: targetUserId
+      projectId, 
+      userId: user._id
     });
 
     if (existingMember) {
-      return res.status(400).json({ message: 'User is already a member' });
+      return res.status(400).json({ message: 'User is already a member of this project' });
     }
 
     const member = await ProjectMember.create({
       projectId,
-      userId: targetUserId,
+      userId: user._id,
       role: role || 'member',
     });
+
+    // Send notification to added member
+    await notificationService.notifyMemberAdded(
+      user._id,
+      user.firstName + ' ' + user.lastName,
+      projectId,
+      project.name,
+      req.user.id
+    );
 
     res.status(201).json({
       message: 'Member added successfully',
@@ -213,15 +232,20 @@ export const removeMember = async (req, res) => {
   try {
     const { projectId, userId } = req.params;
 
+    // Validation
+    if (!userId) {
+      return res.status(400).json({ message: 'User ID is required' });
+    }
+
     const project = await Project.findById(projectId);
 
     if (!project) {
       return res.status(404).json({ message: 'Project not found' });
     }
 
-    // Check authorization
+    // Check authorization - only project owner or admin can remove members
     if (project.ownerId.toString() !== req.user.id && req.user.role !== 'admin') {
-      return res.status(403).json({ message: 'Access denied' });
+      return res.status(403).json({ message: 'Only project owners can remove members' });
     }
 
     // Cannot remove owner
@@ -229,9 +253,28 @@ export const removeMember = async (req, res) => {
       return res.status(400).json({ message: 'Cannot remove project owner' });
     }
 
-    await ProjectMember.findOneAndDelete({
-      projectId, userId
+    // Check if member exists
+    const member = await ProjectMember.findOne({
+      projectId, 
+      userId
     });
+
+    if (!member) {
+      return res.status(404).json({ message: 'Member not found in this project' });
+    }
+
+    await ProjectMember.findOneAndDelete({
+      projectId, 
+      userId
+    });
+
+    // Send notification to removed member
+    await notificationService.notifyMemberRemoved(
+      userId,
+      projectId,
+      project.name,
+      req.user.id
+    );
 
     res.json({ message: 'Member removed successfully' });
   } catch (error) {

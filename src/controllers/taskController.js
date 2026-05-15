@@ -1,9 +1,15 @@
-import { Task, Project, ProjectMember } from '../models/index.js';
+import { Task, Project, ProjectMember, User } from '../models/index.js';
+import { notificationService } from '../services/notificationService.js';
 
 export const createTask = async (req, res) => {
   try {
     const { projectId } = req.params;
     const { title, description, priority, dueDate, assignedTo } = req.body;
+
+    // Validate input
+    if (!title || title.trim().length === 0) {
+      return res.status(400).json({ message: 'Task title is required' });
+    }
 
     // Check if project exists and user has access
     const project = await Project.findById(projectId);
@@ -19,18 +25,47 @@ export const createTask = async (req, res) => {
       req.user.role === 'admin';
 
     if (!hasAccess) {
-      return res.status(403).json({ message: 'Access denied' });
+      return res.status(403).json({ message: 'Access denied to this project' });
+    }
+
+    // Validate assignedTo user if provided
+    if (assignedTo) {
+      const assignedUser = await User.findById(assignedTo);
+      if (!assignedUser) {
+        return res.status(400).json({ message: 'Assigned user not found' });
+      }
+
+      // Check if assignedTo user is a project member
+      const isMember = await ProjectMember.findOne({
+        projectId,
+        userId: assignedTo
+      });
+      
+      if (!isMember && project.ownerId.toString() !== assignedTo && req.user.role !== 'admin') {
+        return res.status(400).json({ message: 'Assigned user must be a project member' });
+      }
     }
 
     const task = await Task.create({
-      title,
-      description,
+      title: title.trim(),
+      description: description?.trim() || '',
       projectId,
       priority: priority || 'medium',
       dueDate: dueDate ? new Date(dueDate) : null,
       assignedTo: assignedTo || null,
       createdBy: req.user.id,
     });
+
+    // Send notification if task is assigned
+    if (assignedTo && assignedTo !== req.user.id) {
+      await notificationService.notifyTaskAssigned(
+        task._id,
+        task.title,
+        assignedTo,
+        req.user.id,
+        project.name
+      );
+    }
 
     res.status(201).json({
       message: 'Task created successfully',
@@ -115,14 +150,61 @@ export const updateTask = async (req, res) => {
       return res.status(403).json({ message: 'Access denied' });
     }
 
-    task.title = title || task.title;
-    task.description = description || task.description;
+    // Track old values for notifications
+    const oldAssignedTo = task.assignedTo;
+    const oldStatus = task.status;
+
+    // Validate assignedTo if changing
+    if (assignedTo && assignedTo !== task.assignedTo.toString()) {
+      const assignedUser = await User.findById(assignedTo);
+      if (!assignedUser) {
+        return res.status(400).json({ message: 'Assigned user not found' });
+      }
+
+      // Check if assignedTo user is a project member
+      const isMember = await ProjectMember.findOne({
+        projectId: task.projectId,
+        userId: assignedTo
+      });
+      
+      if (!isMember && project.ownerId.toString() !== assignedTo && req.user.role !== 'admin') {
+        return res.status(400).json({ message: 'Assigned user must be a project member' });
+      }
+    }
+
+    // Update task fields
+    task.title = title?.trim() || task.title;
+    task.description = description?.trim() || task.description;
     task.status = status || task.status;
     task.priority = priority || task.priority;
     task.dueDate = dueDate ? new Date(dueDate) : task.dueDate;
     task.assignedTo = assignedTo || task.assignedTo;
     
     await task.save();
+
+    // Send notifications
+    // 1. If assignment changed
+    if (assignedTo && assignedTo !== oldAssignedTo?.toString() && assignedTo !== req.user.id) {
+      await notificationService.notifyTaskAssigned(
+        task._id,
+        task.title,
+        assignedTo,
+        req.user.id,
+        project.name
+      );
+    }
+
+    // 2. If status changed and task is assigned to someone
+    if (status && status !== oldStatus && task.assignedTo && task.assignedTo.toString() !== req.user.id) {
+      await notificationService.notifyTaskStatusChanged(
+        task._id,
+        task.title,
+        status,
+        req.user.id,
+        task.projectId,
+        task.assignedTo
+      );
+    }
 
     res.json({
       message: 'Task updated successfully',
